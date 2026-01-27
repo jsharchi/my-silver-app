@@ -3,60 +3,64 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime
 
-# 1. 페이지 기본 설정
-st.set_page_config(page_title="실시간 은 시세", layout="centered")
+# 1. 페이지 설정
+st.set_page_config(page_title="공격적 투자자 대시보드", layout="centered")
 
-# 제목
-st.title("🥈 나만의 실시간 은 시세")
+st.title("🥈 실시간 은 & 로봇주 모니터링")
 
-# 2. 데이터 가져오기 (캐시 처리로 속도 향상)
-@st.cache_data(ttl=60) # 1분마다 새로고침
-def get_data():
-    # 은 선물(SI=F), 원/달러 환율(KRW=X)
+# 2. 데이터 가져오기 함수 (관심 종목 추가)
+@st.cache_data(ttl=60)
+def get_all_data():
+    # 은 및 환율
     silver = yf.Ticker("SI=F")
     exchange = yf.Ticker("KRW=X")
     
-    # 최근 30일치 기록 및 현재 환율
-    hist = silver.history(period="30d")
+    # 관심 종목 리스트 (미래에셋에서 보시는 종목들)
+    # 하이젠알앤엠(445400.KQ), SPG(058610.KQ)
+    stock_list = {
+        "하이젠알앤엠": "445400.KQ",
+        "삼성전자": "005930.KS"
+    }
+    
+    silver_hist = silver.history(period="30d")
     usd_krw = exchange.history(period="1d")['Close'].iloc[-1]
     
-    return hist, usd_krw
+    stock_results = {}
+    for name, code in stock_list.items():
+        s = yf.Ticker(code)
+        stock_results[name] = s.history(period="2d")
+        
+    return silver_hist, usd_krw, stock_results
 
 try:
-    hist, ex_rate = get_data()
+    s_hist, ex_rate, stocks = get_all_data()
     
-    # 현재가 및 전일가 추출
-    current_usd = hist['Close'].iloc[-1]
-    prev_usd = hist['Close'].iloc[-2]
+    # --- 섹션 1: 은 시세 ---
+    st.subheader("💰 원자재 현황")
+    c_usd = s_hist['Close'].iloc[-1]
+    p_usd = s_hist['Close'].iloc[-2]
+    c_krw = (c_usd * ex_rate) / 31.1034768
     
-    # 국내 가격 환산 (1온스 = 31.1034768g)
-    current_krw = (current_usd * ex_rate) / 31.1034768
-    prev_krw = (prev_usd * ex_rate) / 31.1034768
+    st.metric("국내 은 시세", f"{c_krw:,.0f} 원/g", f"{c_krw - ((p_usd * ex_rate)/31.103):,.1f}원")
     
-    # 3. 화면 레이아웃 (모바일 배려)
-    col1, col2 = st.columns(2)
+    # --- 섹션 2: 관심 주식 (미래에셋 종목) ---
+    st.divider()
+    st.subheader("🤖 로봇 및 주요 종목")
     
-    with col1:
-        st.metric(
-            label="국내 은 시세 (원/g)", 
-            value=f"{current_krw:,.0f}원", 
-            delta=f"{current_krw - prev_krw:,.1f}원"
-        )
-    
-    with col2:
-        st.metric(
-            label="국제 은 ($/oz)", 
-            value=f"${current_usd:.2f}", 
-            delta=f"{current_usd - prev_usd:.2f}"
-        )
+    # 종목별로 칸을 나누어 표시
+    cols = st.columns(len(stocks))
+    for i, (name, data) in enumerate(stocks.items()):
+        with cols[i]:
+            curr = data['Close'].iloc[-1]
+            prev = data['Close'].iloc[-2]
+            st.metric(label=name, value=f"{int(curr):,}원", delta=f"{int(curr-prev):,}원")
 
-    # 4. 차트 표시
-    st.subheader("최근 30일 가격 추이")
-    st.line_chart(hist['Close'])
+    # --- 섹션 3: 차트 흐름 ---
+    st.divider()
+    st.subheader("📈 은 가격 흐름 (30일)")
+    st.line_chart(s_hist['Close'])
 
-    # 하단 정보
-    st.caption(f"기준 환율: {ex_rate:.2f}원 | 업데이트: {datetime.now().strftime('%H:%M:%S')}")
+    st.caption(f"최종 업데이트: {datetime.now().strftime('%H:%M:%S')} (환율: {ex_rate:.2f}원)")
 
 except Exception as e:
-    st.error(f"데이터 로딩 중 오류 발생: {e}")
-    
+    st.error(f"데이터 연동 중 오류 발생: {e}")
