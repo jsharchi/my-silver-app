@@ -4,66 +4,84 @@ import pandas as pd
 from pykrx import stock
 from datetime import datetime, timedelta
 
-# 1. 페이지 설정
-st.set_page_config(page_title="공격적 투자자 대시보드", layout="wide")
+# 1. 페이지 설정 (넓게 보기)
+st.set_page_config(page_title="시장 주도주 대시보드", layout="wide")
 
-st.title("🥈 실시간 은 & 🚀 코스닥 거래량 TOP 10")
+st.title("🥈 실시간 은 & 🔥 코스닥 거래량 TOP 10")
 
 # 2. 데이터 가져오기 함수
-@st.cache_data(ttl=600) # 10분마다 데이터 갱신
-def get_dashboard_data():
-    # (1) 은 시세 및 환율 (yfinance 사용)
+@st.cache_data(ttl=300) # 5분마다 시장 데이터 새로고침
+def get_market_data():
+    # (1) 은 시세 및 환율
     silver = yf.Ticker("SI=F")
     exchange = yf.Ticker("KRW=X")
     s_hist = silver.history(period="5d")
     ex_rate = exchange.history(period="1d")['Close'].iloc[-1]
     
-    # (2) 코스닥 거래량 TOP 10 (pykrx 사용)
-    # 오늘 날짜 혹은 가장 최근 장날 확인
-    target_date = datetime.now().strftime("%Y%m%d")
-    
+    # (2) 코스닥 거래량 TOP 10 (진짜 전 종목 대상)
+    today = datetime.now().strftime("%Y%m%d")
     try:
-        # 코스닥 전종목 거래량 정보
-        df = stock.get_market_ohlcv_by_ticker(target_date, market="KOSDAQ")
-        if df.empty: # 장 전이거나 휴일일 경우 전일 데이터 가져오기
-            target_date = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+        # 오늘 거래량 순위 가져오기
+        df = stock.get_market_ohlcv_by_ticker(today, market="KOSDAQ")
+        
+        # 만약 장 전이거나 휴일이라 데이터가 없으면 전날 데이터 찾기
+        count = 1
+        while df.empty and count < 7:
+            target_date = (datetime.now() - timedelta(days=count)).strftime("%Y%m%d")
             df = stock.get_market_ohlcv_by_ticker(target_date, market="KOSDAQ")
+            count += 1
             
+        # 거래량 순으로 정렬 후 상위 10개 추출
         df_sorted = df.sort_values(by="거래량", ascending=False).head(10)
         
-        krx_list = []
+        market_list = []
         for ticker in df_sorted.index:
             name = stock.get_market_ticker_name(ticker)
-            krx_list.append({
+            market_list.append({
                 "종목명": name,
-                "현재가": f"{int(df_sorted.loc[ticker, '종가']):,}원",
-                "등락률": f"{df_sorted.loc[ticker, '등락률']:.2f}%",
-                "거래량": f"{int(df_sorted.loc[ticker, '거래량']):,}"
+                "현재가": df_sorted.loc[ticker, "종가"],
+                "등락률": df_sorted.loc[ticker, "등락률"],
+                "거래량": df_sorted.loc[ticker, "거래량"]
             })
-        krx_df = pd.DataFrame(krx_list)
+        market_df = pd.DataFrame(market_list)
     except:
-        krx_df = pd.DataFrame(["데이터를 불러올 수 없습니다."])
+        market_df = pd.DataFrame()
         
-    return s_hist, ex_rate, krx_df
+    return s_hist, ex_rate, market_df
 
 try:
-    s_hist, ex_rate, top10_df = get_dashboard_data()
+    s_hist, ex_rate, top10_df = get_market_data()
 
-    # 좌측: 은 시세 / 우측: 코스닥 순위 레이아웃
-    col_left, col_right = st.columns([1, 2])
+    # 상단: 은 시세 (심플하게)
+    st.subheader("💰 실시간 국내 은 가격")
+    c_usd = s_hist['Close'].iloc[-1]
+    c_krw = (c_usd * ex_rate) / 31.1034768
+    st.metric(label="은 가격(원/g)", value=f"{c_krw:,.0f}원")
+    
+    st.divider()
 
-    with col_left:
-        st.subheader("💰 실시간 은 시세")
-        c_usd = s_hist['Close'].iloc[-1]
-        c_krw = (c_usd * ex_rate) / 31.1034768
-        st.metric("국내 은 가격", f"{c_krw:,.0f} 원/g")
-        st.line_chart(s_hist['Close'])
+    # 하단: 코스닥 거래량 TOP 10 (큼직한 카드 형태)
+    st.subheader("🚀 오늘 코스닥 거래량 상위 10개 종목")
+    
+    if not top10_df.empty:
+        # 5개씩 두 줄로 표시
+        for i in range(0, 10, 5):
+            cols = st.columns(5)
+            for j in range(5):
+                idx = i + j
+                if idx < len(top10_df):
+                    row = top10_df.iloc[idx]
+                    with cols[j]:
+                        st.metric(
+                            label=f"{idx+1}위: {row['종목명']}",
+                            value=f"{int(row['현재가']):,}원",
+                            delta=f"{row['등락률']:.2f}%"
+                        )
+                        st.caption(f"거래량: {int(row['거래량']):,}")
+    else:
+        st.write("데이터를 불러오는 중입니다... 잠시 후 새로고침 하세요.")
 
-    with col_right:
-        st.subheader("🔥 오늘 코스닥 거래량 TOP 10")
-        st.table(top10_df) # 깔끔한 표 형태로 표시
-
-    st.caption(f"업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (데이터 출처: KRX, Yahoo Finance)")
+    st.caption(f"업데이트: {datetime.now().strftime('%H:%M:%S')} (데이터: KRW/Yahoo)")
 
 except Exception as e:
-    st.error(f"대시보드를 구성하는 중 오류가 발생했습니다.")
+    st.error(f"오류가 발생했습니다: {e}")
