@@ -72,3 +72,31 @@ def get_pro_trading_data_v2():
 
 try:
     s_hist, ex_rate, df = get_pro_trading_data_v2()
+    now_kst_display = get_now_kst().strftime('%H:%M:%S')
+
+    st.info(f"🕒 현재 시각: {now_kst_display} | 은: {((s_hist['Close'].iloc[-1]*ex_rate)/31.103):,.0f}원")
+
+    if not df.empty:
+        for i in range(0, 10, 2):
+            cols = st.columns(2)
+            for j in range(2):
+                idx = i + j
+                if idx < len(df):
+                    row = df.iloc[idx]
+                    with cols[j]:
+                        is_strong = row['거래량비율'] >= 50 and row['시초가대비'] >= 2
+                        if is_strong:
+                            st.success(f"⭐ [강력 매수 타점!] {row['종목명']}")
+                        else:
+                            st.subheader(f"{row['종목명']}")
+                        
+                        st.metric("현재가", f"{int(row['현재가']):,}원", f"{row['등락률']:.2f}%")
+                        st.write(f"📈 시초대비: {row['시초가대비']:+.2f}% | 📊 거래비율: {row['거래량비율']:.1f}%")
+                        st.divider()
+    else:
+        st.warning("⚠️ 거래소 데이터 로딩 지연 중... 10초 뒤 자동 새로고침됩니다.")
+        time.sleep(5)
+        st.rerun()
+
+except Exception as e:
+    st.error("데이터 통신 오류")
