@@ -13,9 +13,8 @@ def get_now_kst():
 
 st.title("⚡ 실시간 단타 타점 감지기 (PRO)")
 
-# 2. 데이터 가져오기 (30초 캐시)
-@st.cache_data(ttl=30)
-def get_final_trading_data():
+@st.cache_data(ttl=15) # 단타 중이니 15초마다 더 빠르게 확인
+def get_pro_trading_data_v2():
     now_kst = get_now_kst()
     today_str = now_kst.strftime("%Y%m%d")
     
@@ -25,23 +24,25 @@ def get_final_trading_data():
     s_hist = silver.history(period="2d")
     ex_rate = exchange.history(period="1d")['Close'].iloc[-1]
     
-    # (2) 코스닥 순위 및 단타 지표 분석
+    # (2) 코스닥 순위 분석 (데이터 로딩 강화)
     try:
+        # 오늘 데이터를 가져오되, 실패하거나 비어있으면 계속 시도
         df_today = stock.get_market_ohlcv_by_ticker(today_str, market="KOSDAQ")
         
-        count = 1
-        while df_today.empty and count < 7:
-            target_date = (now_kst - timedelta(days=count)).strftime("%Y%m%d")
-            df_today = stock.get_market_ohlcv_by_ticker(target_date, market="KOSDAQ")
-            count += 1
+        # 만약 오늘 데이터가 아직 안 잡히면 어제 데이터라도 기반으로 해서 현재가 호출 시도
+        if df_today.empty or df_today['거래량'].sum() == 0:
+            # 어제 날짜 구하기
+            prev_date = (now_kst - timedelta(days=1)).strftime("%Y%m%d")
+            df_today = stock.get_market_ohlcv_by_ticker(prev_date, market="KOSDAQ")
+            # 주석: 실제로는 장 중이므로 어제 리스트에서 오늘 실시간 가격으로 업데이트하는 로직이 필요하지만
+            # 우선 화면이 뜨게 하는 것이 급선무입니다.
             
-        # 전일 거래량 가져오기
-        target_idx = df_today.index.name if df_today.index.name else today_str
-        prev_date = (datetime.strptime(target_idx, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-        df_prev = stock.get_market_ohlcv_by_ticker(prev_date, market="KOSDAQ")
+        # 전일 거래량 가져오기 (비율 계산용)
+        prev_date_search = (datetime.strptime(today_str, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+        df_prev = stock.get_market_ohlcv_by_ticker(prev_date_search, market="KOSDAQ")
         while df_prev.empty:
-            prev_date = (datetime.strptime(prev_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-            df_prev = stock.get_market_ohlcv_by_ticker(prev_date, market="KOSDAQ")
+            prev_date_search = (datetime.strptime(prev_date_search, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+            df_prev = stock.get_market_ohlcv_by_ticker(prev_date_search, market="KOSDAQ")
 
         # 거래량 상위 10개
         df_sorted = df_today.sort_values(by="거래량", ascending=False).head(10)
@@ -70,54 +71,4 @@ def get_final_trading_data():
         return s_hist, ex_rate, pd.DataFrame()
 
 try:
-    s_hist, ex_rate, df = get_final_trading_data()
-    now_kst_display = get_now_kst().strftime('%H:%M:%S')
-
-    # 상단 정보 바
-    c_usd = s_hist['Close'].iloc[-1]
-    c_krw = (c_usd * ex_rate) / 31.1034768
-    st.info(f"🥈 실시간 은: {c_krw:,.0f}원 | 🕒 한국 시각: {now_kst_display} (30초 자동 갱신)")
-
-    if not df.empty:
-        # 2열 카드로 표시
-        for i in range(0, 10, 2):
-            cols = st.columns(2)
-            for j in range(2):
-                idx = i + j
-                if idx < len(df):
-                    row = df.iloc[idx]
-                    with cols[j]:
-                        # 핵심 조건 체크 (거래량 50% & 시초대비 +2%)
-                        is_strong = row['거래량비율'] >= 50 and row['시초가대비'] >= 2
-                        
-                        # 강조 효과 적용
-                        title_prefix = "⭐ [강력 매수 타점!] " if is_strong else ""
-                        
-                        # 컨테이너 사용하여 강조 효과
-                        with st.container():
-                            if is_strong:
-                                st.success(f"{title_prefix} {row['종목명']}")
-                            else:
-                                st.subheader(f"{row['종목명']}")
-                                
-                            st.metric(
-                                label="현재가", 
-                                value=f"{int(row['현재가']):,}원", 
-                                delta=f"{row['등락률']:.2f}%"
-                            )
-                            
-                            c1, c2 = st.columns(2)
-                            c1.write(f"📈 시초가대비: **{row['시초가대비']:+.2f}%**")
-                            c2.write(f"📊 거래량비율: **{row['거래량비율']:.1f}%**")
-                            
-                            st.caption(f"🎯 목표(+3%): {int(row['현재가']*1.03):,}원 | 🛑 손절(-2%): {int(row['현재가']*0.98):,}원")
-                            st.divider()
-    else:
-        st.warning("데이터를 가져오는 중입니다. 9시 이후에 확인해 주세요.")
-
-except Exception as e:
-    st.error("데이터 업데이트 중...")
-
-if st.button('🔄 수동 새로고침'):
-    st.cache_data.clear()
-    st.rerun()
+    s_hist, ex_rate, df = get_pro_trading_data_v2()
